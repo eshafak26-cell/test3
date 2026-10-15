@@ -1,0 +1,228 @@
+{
+    "mode": "remote",
+    "positions": "TBA",
+    "run_batchcal": true,
+
+    "pricing_date": "20260731",
+    "run_name": "0929_base_test",
+    "BatchCal": "PATH_1",
+
+    "temporary_override": {
+    },
+
+    "inputs": {
+        "mr_nofit": true,
+        "mr": "PATH_2",
+        "mr_alt": "PATH_3",
+        "FIELD_1": "PATH_4",
+        "FIELD_2": "PATH_5"
+    },
+
+    "outputs": {
+        "output_dir": ".\\outputs\\{positions}\\{run_name}",
+        "output_file": "{output_dir}\\results\\base_calc\\base_{pricing_date}.pf",
+        "cmd_file": "{output_dir}\\commands\\{run_type}_{pricing_date}.cmd",
+        "scenarios_folder": "{output_dir}\\scenarios"
+    },
+
+    "models": {
+        "KEY_1": "V4",
+        "KEY_2": "0.0",
+        "KEY_3": "VALUE_1",
+        "KEY_4": "VALUE_2",
+        "PP_SECTOR_DIR": "PATH_6"
+    },
+
+    "valuation": {
+        "Book Price": "$Price",
+        "prc_anchor": "Price",
+        "clearcalcselections": true,
+        "Calc P/Y": "N",
+        "scenario": {"calculate": ""},
+        "horizon_scenario": {"scn_rateunit": "YLD", "scn_curve_type": "PARBOND"},
+        "sector_rule": {
+            "rule_name": "BasisTrigger_{run_name}_{pricing_date}_{horizon_date}",
+            "user_rules": [],
+            "block_name_prefix": "Horizon_",
+            "sec_type_field": "Sec Type",
+            "sec_types": ["MBS", "CMOI", "ARM"],
+            "horizon_date_field": "Horizon Date",
+            "scenario_name_field": "FIELD_3",
+            "scenario_date_field": "FIELD_4",
+            "is_horizon_field": "FIELD_5",
+            "is_horizon_value": "1"
+        },
+        "PP_OAS_CACHE": "N",
+        "PP_DISABLE_ALL_CALIB_FILE_CACHING": "T"
+    },
+
+    "report": {
+        "template": ".\\config\\template.csv"
+    },
+
+    "TBA": {
+        "input_file": ".\\data\\Jpm_Tba_Input_{pricing_date}.csv"
+    },
+
+    "PORT": {
+        "input_file": ".\\data\\Port\\INPUT_1",
+        "groupbyflds": "FIELD_6,FIELD_7,FIELD_8,FIELD_9",
+        "Use History": "NO",
+        "PP_CALC_OA_SPEED_FOR_CMO": "Y",
+        "User CDU Date": ""
+    },
+
+    "bridge_logging_settings": {
+        "KEY_5": "",
+        "KEY_6": "",
+        "KEY_7": "",
+        "KEY_8": "",
+        "KEY_9": "",
+        "KEY_10": "",
+        "KEY_11": "",
+        "KEY_12": "",
+        "KEY_13": "",
+        "KEY_14": ""
+    },
+
+    "pp_debug_settings": {
+        "DEBUG_LEVEL": "",
+        "DEBUG_FILE": ""
+    },
+
+    "remote": {
+        "priority": "1",
+        "PP_REMOTE_CALC_SERVER": "<REMOTE_CALC_SERVER>",
+        "PP_DEFAULT_REMOTE_PROFILE": "PROFILE_1",
+        "Remote Dist. Dur": "Y"
+    },
+
+    "run_type_settings": {
+        "base": {
+            "calculate": "/py /oas /oad /oaspd /ppspd /md /vd"
+        },
+
+        "prepay_dials": {
+            "calculate": "/py /oas /oad /ppspd /md /vd",
+            "Total Smm Asset Multiplier": [0, 2, 0.2],
+            "Refinance Smm Asset Multiplier": [0, 2, 0.2],
+            "Turnover Smm Asset Multiplier": [0, 2, 0.2],
+            "Curtailment Smm Asset Multiplier": [0, 2, 0.2],
+            "Cashout Smm Asset Multiplier": [0, 2, 0.2],
+            "ramp_month": "",
+            "output_file": "{output_dir}\\results\\cpr_calc\\base_with_dials_out_{pricing_date}.pf"
+        },
+
+        "prepay_breakdown": {
+            "calculate": "/py /oas /oad /oaspd /ppspd",
+            "scenario_label_column": "CPR_Scenario",
+            "scenario_columns": ["Total Smm Asset Multiplier", "Refinance Smm Asset Multiplier", "Turnover Smm Asset Multiplier", "Curtailment Smm Asset Multiplier", "Cashout Smm Asset Multiplier"],
+            "scenario_rows": {
+                "default":     [0, 1, 1, 1, 1],
+                "refinance":   [1, 1, 0, 0, 0],
+                "turnover":    [1, 0, 1, 0, 0],
+                "curtailment": [1, 0, 0, 1, 0],
+                "cashout":     [1, 0, 0, 0, 1]
+            },
+            "output_file": "{output_dir}\\results\\cpr_sub_calc\\cpr_sub_out_{pricing_date}.pf"
+        },
+
+        "spot": {
+            "calculate": "/oas",
+            "output_file": "{output_dir}\\results\\scn_spot_calc\\scn_rates_{pricing_date}.pf",
+            "scenario": {
+                "scn": ".\\config\\scn\\rates.scn",
+                "scn_anchor": "OAS Constant",
+                "scnrptflds": ".\\config\\scn_fields.txt",
+                "calculate": "/scnoad /scnoaspd /scnmd"
+            }
+        },
+
+        "oas_shock": {
+            "calculate": "/oas",
+            "output_file": "{output_dir}\\results\\oas_shock_calc\\oas_shock_{pricing_date}.pf",
+            "scenario": {
+                "scn": ".\\config\\scn\\oas_shock.scn",
+                "scn_anchor": "OAS Constant",
+                "scnrptflds": ".\\config\\scn_fields.txt",
+                "calculate": "/scnoad /scnoaspd /scnmd"
+            }
+        },
+
+        "bookincome": {
+            "calculate": "/oas",
+            "output_file": "{output_dir}\\results\\bookincome_calc\\base_{pricing_date}.pf",
+            "scenario": {
+                "cftscn": true,
+                "scn": ".\\config\\scn\\rates.scn",
+                "scn_anchor": "OAS Constant",
+                "calculate": "/scnoad",
+                "groupby": "month",
+                "cftflds": ".\\config\\cftfields.txt",
+                "alm_bookincome": "12",
+                "alm_mv_freq": "4"
+            }
+        },
+
+        "collat": {
+            "calculate": "/py /oas /oad /oaspd /ppspd",
+            "scenario_label_column": "Collat_Scenario",
+            "% TP Broker":         {"range": [5, 100, 5],     "% TP Retail": "100 - value",  "% TP Correspondent": 0},
+            "Orig FICO":           [550, 850, 50],
+            "%FL":                 [0, 100, 25],
+            "Investor Ratio":      [0, 1, 0.25],
+            "Refinance Ratio":     {"range": [0.05, 1, 0.05], "Purchase Ratio": "1 - value", "Cash Out Ratio": 0},
+            "Orig Avg Loan Size":  {"values": [85, 110, 125, 150, 175, 200, 225, 250, 350, 450, 550, 650, 750, 850, 950]},
+            "Orig LTV":            [40, 100, 5],
+            "%NY":                 [0, 100, 25],
+            "Prim Resid Ratio":    {"range": [0, 0.95, 0.05], "Investor Ratio": "1 - value", "Secondary Residential Ratio": 0},
+            "%PR":                 [0, 100, 25],
+            "Single Family Ratio": {"range": [0, 1, 0.25],    "Multi Family Ratio": "1 - value"},
+            "%TX":                 [0, 100, 25],
+            "WALA (Coll)":         {"range": [12, 348, 12],   "WAM (Coll)": "Term - value + 1", "keep_rows_when": "value < Term"},
+            "output_file": "{output_dir}\\results\\collat_calc\\collateral_output_{pricing_date}.pf"
+        },
+
+        "time_series": {
+            "calculate": "/oas /ppspd /oaspd /oad",
+            "pricing_dates": {"start": "20260630", "end": "20260731"},
+            "output_file": "{output_dir}\\results\\time_series\\base_{pricing_date}_out.pf"
+        },
+
+        "horizon": {
+            "horizon_date": "20270731",
+            "calculate": "/oas",
+            "output_file": "{output_dir}\\results\\scn_horizon_calc\\unch_{pricing_date}_{horizon_date}.pf",
+            "scenario": {
+                "scn": ".\\config\\scn\\unch.scn",
+                "scn_anchor": "OAS Constant",
+                "scnrptflds": ".\\config\\scn_fields-v2.txt",
+                "calculate": "/scnmd /scnoad /scnoaspd /scnspd /scnvd /scnoappspd"
+            }
+        },
+
+        "logging": {
+            "mode": "local",
+            "input_file": ".\\data\\three_bonds.csv",
+            "calculate": "/py",
+            "KEY_5": "YES",
+            "KEY_6": "YES",
+            "KEY_7": "YES",
+            "KEY_8": "YES",
+            "KEY_9": "YES",
+            "KEY_10": "YES",
+            "KEY_11": "YES",
+            "KEY_12": "YES",
+            "KEY_13": "{output_dir}\\logs",
+            "KEY_14": "{output_dir}\\logs",
+            "output_file": "{output_dir}\\results\\logging\\logging_{pricing_date}.pf"
+        },
+
+        "my_test": {
+            "mode": "local",
+            "input_file": ".\\data\\three_bonds.csv",
+            "calculate": "/py /oas",
+            "output_file": "{output_dir}\\results\\my_test\\my_test_{pricing_date}.pf"
+        }
+    }
+}
