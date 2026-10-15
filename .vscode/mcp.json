@@ -1,0 +1,10 @@
+{
+    "servers": {
+        "polypaths-wrapper": {
+            "type": "stdio",
+            "command": "${command:python.interpreterPath}",
+            "args": ["mcp_server.py"],
+            "cwd": "${workspaceFolder}"
+        }
+    }
+}

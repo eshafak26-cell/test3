@@ -1,0 +1,134 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; font-family: Segoe UI, Arial, sans-serif; color: #172033; background: transparent; }
+  main { display: flow-root; box-sizing: border-box; width: 100%; max-width: 656px; padding: 8px; }
+  body.curve main { max-width: 976px; }
+  .head { font-size: 13px; color: #4b5563; margin: 0 0 6px 2px; }
+  .head b { color: #111827; }
+  img { display: block; box-sizing: border-box; width: 100%; height: auto; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 8px; background: white; }
+  .note { font-size: 12px; color: #6b7280; margin: 2px; }
+</style>
+</head>
+<body>
+<main id="results">
+<div id="head" class="head">Waiting for results…</div>
+<div id="plots"></div>
+<div id="note" class="note"></div>
+</main>
+<script>
+  var nextId = 1;
+  var pending = {};
+  var connected = false;
+  var renderVersion = 0;
+  var lastHeight = 0;
+
+  function sendRequest(method, params) {
+    return new Promise(function (resolve, reject) {
+      var id = nextId++;
+      pending[id] = { resolve: resolve, reject: reject };
+      window.parent.postMessage({ jsonrpc: "2.0", id: id, method: method, params: params }, "*");
+    });
+  }
+
+  function sendNotification(method, params) {
+    window.parent.postMessage({ jsonrpc: "2.0", method: method, params: params }, "*");
+  }
+
+  function reportSize() {
+    if (!connected) return;
+    var height = Math.ceil(document.getElementById("results").getBoundingClientRect().height);
+    if (height === lastHeight) return;
+    lastHeight = height;
+    sendNotification("ui/notifications/size-changed", { height: height });
+  }
+
+  function render(result) {
+    var version = ++renderVersion;
+    var data = result.structuredContent || {};
+    document.body.classList.toggle("curve", data.operation === "curve");
+    var head = document.getElementById("head");
+    var plots = document.getElementById("plots");
+    var note = document.getElementById("note");
+    plots.innerHTML = "";
+    note.textContent = "";
+    if (data.status !== "completed") {
+      head.textContent = "Job " + (data.job_id || "") + " is " + (data.status || "unknown") + ". " + (data.error || "");
+      reportSize();
+      return;
+    }
+    var params = JSON.stringify(data.parameters || {});
+    head.textContent = data.cusip + " · " + data.pricing_date + " · " + data.operation + " " + params + " · " + data.job_id;
+    var names = data.plots || [];
+    if (names.length === 0) {
+      head.textContent = "";
+      reportSize();
+      return;
+    }
+    names.forEach(function (name) {
+      var img = document.createElement("img");
+      img.alt = data.cusip + " · " + name;
+      img.style.display = "none";
+      img.onload = function () {
+        if (version !== renderVersion) return;
+        img.style.display = "";
+        reportSize();
+      };
+      img.onerror = function () {
+        if (version !== renderVersion) return;
+        img.remove();
+        note.textContent = "Could not display " + name + ".";
+        reportSize();
+      };
+      plots.appendChild(img);
+      sendRequest("tools/call", { name: "get_plot", arguments: { job_id: data.job_id, plot_name: name } })
+        .then(function (reply) {
+          if (version !== renderVersion) return;
+          if (reply.isError) {
+            img.remove();
+            note.textContent = "Could not load " + name + ".";
+            reportSize();
+            return;
+          }
+          img.src = "data:image/png;base64," + reply.structuredContent.image;
+        }, function (err) {
+          if (version !== renderVersion) return;
+          img.remove();
+          note.textContent = "Could not load " + name + ": " + JSON.stringify(err);
+          reportSize();
+        });
+    });
+    reportSize();
+  }
+
+  window.addEventListener("message", function (event) {
+    if (event.source !== window.parent) return;
+    var msg = event.data;
+    if (!msg || msg.jsonrpc !== "2.0") return;
+    if (msg.id !== undefined && pending[msg.id]) {
+      var p = pending[msg.id];
+      delete pending[msg.id];
+      if (msg.error) p.reject(msg.error); else p.resolve(msg.result);
+      return;
+    }
+    if (msg.method === "ui/notifications/tool-result") {
+      render(msg.params || {});
+    }
+  });
+
+  new ResizeObserver(reportSize).observe(document.getElementById("results"));
+
+  sendRequest("ui/initialize", {
+    protocolVersion: "2026-01-26",
+    appInfo: { name: "polypaths-wrapper-results", version: "1" },
+    appCapabilities: {}
+  }).then(function () {
+    connected = true;
+    sendNotification("ui/notifications/initialized", {});
+    reportSize();
+  });
+</script>
+</body>
+</html>
