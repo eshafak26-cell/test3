@@ -16,10 +16,10 @@ from tools import read_input, read_json, write_input
 
 
 AI_DIR = Path("outputs/ai")
-PREPAY_NAMES = {1.0: "Base", 1.5: "Prepayx1.5", 2.0: "Prepayx2"}
+PREPAY_NAMES = {1.0: "unch", 1.5: "Prepayx1.5", 2.0: "Prepayx2"}
 RATE_NAMES = {}
 for shift_bp in (-100, -75, -50, -25, 0, 25, 50, 75, 100):
-    RATE_NAMES[shift_bp] = "Base" if shift_bp == 0 else f"Rate{shift_bp:+d}"
+    RATE_NAMES[shift_bp] = "unch" if shift_bp == 0 else f"Rate{shift_bp:+d}"
 METRICS = ["Price", "OAS", "OA Dur", "OA CPR", "LT. CPR", "DV01"]
 METRIC_DECIMALS = {"Price": 2, "OAS": 0, "OA Dur": 1, "OA CPR": 1, "LT. CPR": 1}
 
@@ -137,22 +137,19 @@ def prepare_base(cusip, pricing_date):
 
 
 def prepare_prepay(analysis_id, prepay_factor):
-    scen_name = PREPAY_NAMES[prepay_factor]
-    scens = [{"name": "Base", "PrepayMult": 1.0}]
-    if prepay_factor != 1.0:
-        scens.append({"name": scen_name, "PrepayMult": prepay_factor})
     return prepare_scen_job(
-        analysis_id, "prepay", {"prepay_factor": prepay_factor}, scens
+        analysis_id, "prepay", {"prepay_factor": prepay_factor},
+        [], {"Total Smm Asset Multiplier": prepay_factor}
     )
 
 
 def prepare_rate_shift(analysis_id, shift_bp):
     scen_name = RATE_NAMES[shift_bp]
-    scens = [{"name": "Base", "shift_bp": 0}]
+    scens = [{"name": "unch", "shift_bp": 0}]
     if shift_bp != 0:
         scens.append({"name": scen_name, "shift_bp": shift_bp})
     return prepare_scen_job(
-        analysis_id, "rate_shift", {"shift_bp": shift_bp}, scens
+        analysis_id, "rate_shift", {"shift_bp": shift_bp}, scens, {}
     )
 
 
@@ -161,11 +158,11 @@ def prepare_curve(analysis_id):
     for shift_bp, scen_name in RATE_NAMES.items():
         scens.append({"name": scen_name, "shift_bp": shift_bp})
     return prepare_scen_job(
-        analysis_id, "curve", {"shift_bp": list(RATE_NAMES)}, scens
+        analysis_id, "curve", {"shift_bp": list(RATE_NAMES)}, scens, {}
     )
 
 
-def prepare_scen_job(analysis_id, operation, parameters, scens):
+def prepare_scen_job(analysis_id, operation, parameters, scens, setfields):
     analysis = read_analysis(analysis_id)
     base_status = read_job_status(analysis["base_job_id"])
     if base_status["status"] != "completed":
@@ -182,9 +179,11 @@ def prepare_scen_job(analysis_id, operation, parameters, scens):
             "base_job_id": base_status["job_id"], "base_status": base_status["status"],
             "base_error": base_status["error"]
         }
-    return prepare_job(
-        analysis_id, operation, parameters, analysis["spot_settings"], scens
+    settings = copy.deepcopy(
+        analysis["spot_settings"] if scens else analysis["base_settings"]
     )
+    settings.update(setfields)
+    return prepare_job(analysis_id, operation, parameters, settings, scens)
 
 
 def write_scn_file(zero_scen, scens, scn_file):
@@ -265,7 +264,10 @@ def read_job_status(job_id):
 def read_job_metrics(job):
     job_dir = job_file(job["job_id"]).parent
     metrics = []
-    if job["operation"] == "base":
+    if not job["scens"]:
+        scen_name = "Base"
+        if job["operation"] == "prepay":
+            scen_name = PREPAY_NAMES[job["parameters"]["prepay_factor"]]
         report_file = Path(job["run_files"]["csv_file"])
         if not report_file.is_file():
             return metrics
@@ -278,7 +280,7 @@ def read_job_metrics(job):
                 if metric in result_rows.columns and result_row[metric] != "":
                     metrics.append({
                         "row": int(row_number), "cusip": result_row["Cusip"],
-                        "scenario": "Base", "metric": metric,
+                        "scenario": scen_name, "metric": metric,
                         "value": float(result_row[metric])
                     })
     else:
@@ -293,10 +295,7 @@ def read_job_metrics(job):
                 for row_number, result_row in result_rows.iterrows():
                     for scen in job["scens"]:
                         scen_name = scen["name"]
-                        if scen_name not in result_rows.columns or result_row[scen_name] == "":
-                            job["error"] = "A scenario result is missing. See the local CSV."
-                            return []
-                        else:
+                        if scen_name in result_rows.columns and result_row[scen_name] != "":
                             metrics.append({
                                 "row": int(row_number), "cusip": result_row["Cusip"],
                                 "scenario": scen_name, "metric": metric,
@@ -305,14 +304,14 @@ def read_job_metrics(job):
     return metrics
 
 
-def compare_metrics(metrics):
+def compare_metrics(metrics, zero_name):
     base_values = {}
     for metric in metrics:
-        if metric["scenario"] == "Base":
+        if metric["scenario"] == zero_name:
             base_values[(metric["row"], metric["cusip"], metric["metric"])] = metric["value"]
     comparison = []
     for metric in metrics:
-        if metric["scenario"] != "Base":
+        if metric["scenario"] != zero_name:
             base_value = base_values[(metric["row"], metric["cusip"], metric["metric"])]
             comparison.append({
                 **metric, "base": base_value,
@@ -338,7 +337,14 @@ def execute_job(job_id):
     job["status"] = "failed"
     if process_result.returncode == 0:
         metrics = read_job_metrics(job)
-        comparison = compare_metrics(metrics)
+        if job["operation"] == "prepay":
+            analysis = read_analysis(job["analysis_id"])
+            base_metrics = read_json(job_dir.parent / analysis["base_job_id"] / "metrics.json")
+            comparison = compare_metrics(base_metrics + metrics, "Base")
+        elif job["scens"]:
+            comparison = compare_metrics(metrics, "unch")
+        else:
+            comparison = []
         if metrics:
             save_json(job_dir / "metrics.json", metrics)
             save_json(job_dir / "comparison.json", comparison)
@@ -367,11 +373,11 @@ def read_job_results(job_id):
     for plot_file in read_job(job_id).get("plot_files", []):
         status["plots"].append(Path(plot_file).name)
     status["how_to_read"] = {
-        "difference": "scenario value minus the zero-shift (Base) value computed inside this same job",
-        "base": "the separately executed Base job" if status["operation"] == "base" else "the zero-shift scenario of this job, run from the saved analysis settings; it is not the separately executed Base job",
+        "difference": "the Base job value for prepay jobs; the zero-shift (unch) value computed inside this same job for rate jobs",
+        "base": "the separately executed Base job" if status["operation"] in ("base", "prepay") else "the zero-shift scenario of this job, run from the saved analysis settings; it is not the separately executed Base job",
         "scenarios": "each scenario starts from the saved Base settings; shocks do not accumulate across jobs",
         "rows": "one row per input holding; rows of the same Cusip are reported separately, not merged",
         "DV01": "engine field name kept as is; not derived from a duration",
-        "PrepayMult": "engine scenario multiplier; not a proportional CPR or SMM change",
+        "prepay_factor": "Total Smm Asset Multiplier applied to the Base settings; not a proportional CPR change",
     }
     return status

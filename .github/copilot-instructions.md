@@ -12,7 +12,7 @@ Use the MCP server `polypaths-wrapper`. Settings and BatchCal commands are built
 |---|---|---|
 | list_assets | pricing_date | List the Cusip values in the input file |
 | prepare_base | cusip, pricing_date | Prepare a Base run, returns analysis id and job id |
-| prepare_prepay | analysis_id, prepay_factor | Prepare a PrepayMult scenario, allowed 1.0, 1.5, 2.0 |
+| prepare_prepay | analysis_id, prepay_factor | Prepare a prepay run with Total Smm Asset Multiplier, allowed 1.0, 1.5, 2.0 |
 | prepare_rate_shift | analysis_id, shift_bp | Prepare a parallel Govt/Libor/Agency shift, allowed -100, -75, -50, -25, 0, 25, 50, 75, 100 bp |
 | prepare_curve | analysis_id | Prepare the fixed nine-point rate curve |
 | execute_job | job_id | Run one prepared job |
@@ -34,8 +34,8 @@ Dates are YYYYMMDD. Use the Cusip exactly as it appears in the input; do not gue
 ## Reporting results
 
 - Do not add a Unit column or unit suffixes. Preserve display_table formatting: Price 2 decimals, OAS 0, OA Dur 1, OA CPR 1 and LT. CPR 1. Raw values retain their calculation precision.
-- The prepay parameter is the engine's PrepayMult. Do not describe it as a proportional change in CPR or SMM unless that has been confirmed.
-- The difference is the scenario value minus the zero-shift value inside the same job. Whether that zero-shift value matches a plain Base run still has to be checked against real output.
+- The prepay parameter is the Total Smm Asset Multiplier applied to the Base settings. Do not describe it as a proportional change in CPR unless that has been confirmed.
+- For prepay jobs the difference is the prepay run minus the Base job. For rate jobs it is the scenario value minus the zero-shift value inside the same job.
 - DV01 keeps the engine's field name. Do not rename it from a duration or rescale it.
 - The nine-point curve is a rate sensitivity curve; do not call it an S curve on your own.
 - If one Cusip has several input rows, show each row separately; do not merge holdings.

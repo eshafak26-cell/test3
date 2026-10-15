@@ -89,10 +89,14 @@ def draw_curve(plot_file, cusip, job, results):
 
 
 def describe_base(job):
-    return "zero-shift scenario in this job"
+    if job["scens"]:
+        return "zero-shift scenario in this job"
+    return "Base job"
 
 
 def describe_scenario(job, scen_name):
+    if "prepay_factor" in job["parameters"]:
+        return "Total Smm Asset Multiplier " + str(job["parameters"]["prepay_factor"])
     for scen in job["scens"]:
         if scen["name"] == scen_name:
             if "PrepayMult" in scen:

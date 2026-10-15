@@ -45,7 +45,7 @@ Skip routine progress narration. Show parameter confirmation, final findings, or
 2. execute_job(job_id). The server shows the user a Run / Cancel form with the saved parameters; the job runs only if the user selects Run. Do not ask the user again in chat. If cancelled, stop.
 3. When the status is completed, read_job_results(job_id). For non-curve jobs, reproduce display_table as a normal Markdown table in your chat reply, preserving its decimal places. Do not add a Unit column, unit suffixes or extra decimal places. If plots is nonempty, also call show_job_chart(job_id) to display the original PNG charts. If plots is empty, use the chat table only; do not call show_job_chart or say that no chart was returned.
 4. Scenarios need a completed Base: prepare_prepay, prepare_rate_shift or prepare_curve with the same analysis_id, then execute_job and read_job_results. Each scenario starts from the saved Base settings; shocks do not accumulate. If created is false, no scenario was created: follow base_status and reason. If prepared, execute the Base and prepare the requested scenario again after it completes. If running, wait and check read_job_status; do not execute it again. If failed, report base_error and stop; do not retry that failed job or create a new Base unless the user requests it.
-Reporting: display Price with 2 decimals, OAS with 0 decimals, OA Dur with 1 decimal, OA CPR with 1 decimal and LT. CPR with 1 decimal. Display precision does not change raw calculation values. The difference is scenario minus the zero-shift value inside the same job. PrepayMult is the engine multiplier, not a CPR or SMM change. Keep DV01 as the engine reports it. Report rows of the same Cusip separately. A missing metric means the engine did not return it; do not invent numbers. Dates are YYYYMMDD; use Cusip values exactly as listed."""
+Reporting: display Price with 2 decimals, OAS with 0 decimals, OA Dur with 1 decimal, OA CPR with 1 decimal and LT. CPR with 1 decimal. Display precision does not change raw calculation values. For prepay jobs the difference is the prepay run minus the Base job. For rate jobs it is scenario minus the zero-shift value inside the same job. prepay_factor is the Total Smm Asset Multiplier, not a CPR change. Keep DV01 as the engine reports it. Report rows of the same Cusip separately. A missing metric means the engine did not return it; do not invent numbers. Dates are YYYYMMDD; use Cusip values exactly as listed."""
 
 mcp = MCPServer("polypaths-wrapper", instructions=SERVER_INSTRUCTIONS, extensions=[apps])
 
@@ -69,7 +69,7 @@ async def prepare_base(cusip: str, pricing_date: Annotated[str, Field(pattern=r"
     return agent.prepare_base(cusip, pricing_date)
 
 
-@mcp.tool(description="Prepare a PrepayMult scenario (zero-shift plus the given factor) from the saved Base settings of analysis_id. Needs a completed Base job; otherwise returns created false. PrepayMult is the engine multiplier, not a CPR or SMM change. Nothing runs until execute_job.")
+@mcp.tool(description="Prepare a prepay run: the saved Base settings with Total Smm Asset Multiplier set to the given factor, same calculation as Base, compared with the Base job. Needs a completed Base job; otherwise returns created false. Nothing runs until execute_job.")
 async def prepare_prepay(analysis_id: str, prepay_factor: Literal[1.0, 1.5, 2.0]) -> dict:
     return agent.prepare_prepay(analysis_id, prepay_factor)
 
@@ -106,7 +106,7 @@ async def execute_job(job_id: str, ctx: Context) -> dict:
         "job_id": job_id,
     }
     confirmation = await ctx.elicit(
-        message="Review this run before execution. Scenario changes are relative to Base; rate shifts are in bp. PrepayMult is the engine parameter, not a CPR/SMM multiplier.\n\n"
+        message="Review this run before execution. Scenario changes are relative to Base; rate shifts are in bp. prepay_factor is the Total Smm Asset Multiplier, not a CPR multiplier.\n\n"
         + json.dumps(preview, ensure_ascii=False, indent=2),
         schema=RunConfirmation,
     )
