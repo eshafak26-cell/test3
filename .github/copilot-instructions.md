@@ -15,10 +15,10 @@ Use the MCP server `polypaths-wrapper`. Settings and BatchCal commands are built
 | prepare_prepay | analysis_id, prepay_factor | Prepare a prepay run with Total Smm Asset Multiplier, allowed 1.0, 1.5, 2.0 |
 | prepare_rate_shift | analysis_id, shift_bp | Prepare a parallel Govt/Libor/Agency shift, allowed -100, -75, -50, -25, 0, 25, 50, 75, 100 bp |
 | prepare_curve | analysis_id | Prepare the fixed nine-point rate curve |
-| execute_job | job_id | Run one prepared job |
-| read_job_status | job_id | Read one job's status |
+| execute_job | job_id | Start one prepared job; returns running at once |
+| read_job_status | job_id | Read one job's status; poll it until completed or failed |
 | read_job_results | job_id | Read numbers and a formatted table for the chat reply |
-| show_job_chart | job_id | Display existing charts when read_job_results returns nonempty plots |
+| show_job_chart | job_id | Display HTML comparison cards or SVG rate curves when comparison is nonempty |
 
 Dates are YYYYMMDD. Use the Cusip exactly as it appears in the input; do not guess mappings between names and ids. If the MCP server is not connected, say so; do not use the terminal or file tools instead.
 
@@ -27,7 +27,7 @@ Dates are YYYYMMDD. Use the Cusip exactly as it appears in the input; do not gue
 1. For a Base request, call list_assets, confirm the Cusip exists, then call prepare_base.
 2. Show the Cusip, date, parameters, analysis id and job id. Prepared does not mean run.
 3. Show the job summary, then call execute_job directly. The server requests a user confirmation form with saved task parameters before each run. The user must select Run to execute; Cancel, dismissal or refusal means stop without retrying. Do not answer this form on the user's behalf, ask for another chat confirmation or use confirm_run.py. VS Code's tool Allow permission is separate: allowing the session does not skip the parameter confirmation form. If the tool call is denied, stop without another execution route.
-4. When execute_job returns completed, call read_job_results. For non-curve jobs, reproduce display_table as a normal Markdown table in the chat reply. If plots is nonempty, also call show_job_chart to display the PNG charts. If plots is empty, show only the chat table; do not call show_job_chart or announce that no chart was returned. If execution fails, say so; do not fill in numbers.
+4. execute_job returns running at once; BatchCal keeps running on the server. Call read_job_status again after a while until it returns completed or failed; a run takes a few minutes, the nine-point curve longer. Do not call execute_job again for the same job. When the status is completed, call read_job_results. If comparison is nonempty, call show_job_chart for HTML comparison cards or SVG rate curves and give a brief finding; do not duplicate the full table unless requested. If comparison is empty, reproduce display_table as a normal Markdown table in chat; do not call show_job_chart or announce that no chart was returned. If execution fails, say so; do not fill in numbers.
 5. Later scenarios use the same analysis_id. Each one starts from the saved Base settings; shocks do not accumulate.
 6. If a scenario preparation returns created false, no scenario was created. Follow base_status and reason: prepared means execute the Base and prepare the requested scenario again after it completes; running means wait and check read_job_status without executing again; failed means report base_error and stop. Do not retry the failed Base or create a new one unless the user requests it.
 

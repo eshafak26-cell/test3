@@ -1,15 +1,14 @@
 import json
 import os
-import subprocess
 from prepare import prepare_input, write_rule_file
-from tools import merge, read_json, setting_to_args, write_cmd_file
+from tools import merge, read_json, run_cmds, setting_to_args, write_cmd_file
 
 def run(run_type, override):
     config = read_config("config.json", run_type, override)
     settings = prepare_settings(config)
     made = make_cmd_file(settings)
     if settings["run_batchcal"]:
-        subprocess.run(made["cmd_file"])
+        run_cmds(made["cmds"])
 
 
 def make_cmd_file(settings):
@@ -36,7 +35,7 @@ def make_cmd_file(settings):
     if settings["DEBUG_FILE"] != "":
         os.makedirs(os.path.dirname(settings["DEBUG_FILE"]), exist_ok=True)
     cmd_text = write_cmd_file(settings, cmds)
-    return {"cmd_file": settings["cmd_file"], "cmd_text": cmd_text, "csv_file": csv_file}
+    return {"cmd_file": settings["cmd_file"], "cmd_text": cmd_text, "csv_file": csv_file, "cmds": cmds}
 
 
 def scen_settings(settings):

@@ -4,26 +4,57 @@
 <meta charset="utf-8">
 <style>
   body { margin: 0; font-family: Segoe UI, Arial, sans-serif; color: #172033; background: transparent; }
-  main { display: flow-root; box-sizing: border-box; width: 100%; max-width: 656px; padding: 8px; }
-  body.curve main { max-width: 976px; }
+  main { display: flow-root; box-sizing: border-box; width: 100%; max-width: 576px; padding: 6px; }
+  body.curve main { max-width: 940px; }
   .head { font-size: 13px; color: #4b5563; margin: 0 0 6px 2px; }
   .head b { color: #111827; }
-  img { display: block; box-sizing: border-box; width: 100%; height: auto; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 8px; background: white; }
-  .note { font-size: 12px; color: #6b7280; margin: 2px; }
+  .comparison { box-sizing: border-box; padding: 16px; margin-bottom: 10px; border: 1px solid #e5e8ed; border-radius: 8px; background: #fff; }
+  .comparison h2 { margin: 0 0 5px; font-size: 15px; line-height: 1.4; font-weight: 650; overflow-wrap: anywhere; }
+  .subtitle, .basis { color: #737c8c; font-size: 11px; line-height: 1.5; }
+  .subtitle { margin-bottom: 13px; }
+  .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .metric { min-width: 0; padding: 11px 12px; border: 1px solid #edf0f4; border-left: 3px solid #5d8dd3; border-radius: 3px; }
+  .metric:nth-child(2n) { border-left-color: #bd8b52; }
+  .metric:nth-child(3n) { border-left-color: #47a28e; }
+  .label { margin-bottom: 8px; color: #738092; font-size: 10px; letter-spacing: .5px; text-transform: uppercase; }
+  .values { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px; font-size: 14px; line-height: 1.4; font-variant-numeric: tabular-nums; }
+  .values span, .values strong { overflow-wrap: anywhere; }
+  .old, .arrow { color: #87909e; }
+  .values strong { font-size: 16px; font-weight: 700; }
+  .difference { display: inline-block; margin-top: 7px; padding: 2px 6px; border-radius: 4px; font-size: 10px; line-height: 1.5; background: #f0f2f5; color: #637083; }
+  .difference.up { background: #eaf6f0; color: #29785a; }
+  .difference.down { background: #fcf0e9; color: #a56537; }
+  .basis { margin-top: 12px; padding-top: 9px; border-top: 1px solid #f0f2f5; }
+  .curves-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+  .curve-metric { min-width: 0; padding: 10px 8px; border: 1px solid #edf0f4; border-radius: 4px; }
+  .curve-metric .label { margin-left: 5px; }
+  svg { display: block; width: 100%; height: 184px; overflow: hidden; }
+  svg text { font-family: Segoe UI, Arial, sans-serif; font-size: 10px; fill: #738092; font-variant-numeric: tabular-nums; }
+  svg .gridline { stroke: #edf0f4; }
+  svg .zero { stroke: #b9c5d6; stroke-dasharray: 3 3; }
+  svg .line { fill: none; stroke: #5275d9; stroke-width: 1.8; }
+  svg circle { fill: #5275d9; stroke: white; stroke-width: 1; }
+  @media (max-width: 760px) {
+    .curves-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 400px) {
+    .comparison { padding: 12px; }
+    .metrics { grid-template-columns: minmax(0, 1fr); }
+    .curves-grid { grid-template-columns: minmax(0, 1fr); }
+  }
 </style>
 </head>
 <body>
 <main id="results">
 <div id="head" class="head">Waiting for results…</div>
-<div id="plots"></div>
-<div id="note" class="note"></div>
+<div id="charts"></div>
 </main>
 <script>
   var nextId = 1;
   var pending = {};
   var connected = false;
-  var renderVersion = 0;
   var lastHeight = 0;
+  var lastWidth = 0;
 
   function sendRequest(method, params) {
     return new Promise(function (resolve, reject) {
@@ -45,61 +76,146 @@
     sendNotification("ui/notifications/size-changed", { height: height });
   }
 
+  function svgElement(name, attributes, text) {
+    var element = document.createElementNS("http://www.w3.org/2000/svg", name);
+    for (var key in attributes) element.setAttribute(key, attributes[key]);
+    if (text !== undefined) element.textContent = text;
+    return element;
+  }
+
+  function drawCurves() {
+    for (var svg of document.querySelectorAll("svg")) {
+      var series = svg.series;
+      var points = series.points;
+      var width = svg.getBoundingClientRect().width;
+      var height = 184;
+      var top = 12, bottom = 145;
+      var minimum = Math.min(...points.map(function (point) { return point.value; }));
+      var maximum = Math.max(...points.map(function (point) { return point.value; }));
+      var step = (maximum - minimum) / 3 || Math.abs(maximum) * 0.02 || 1;
+      var magnitude = Math.pow(10, Math.floor(Math.log10(step)));
+      var fraction = step / magnitude;
+      step = (fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10) * magnitude;
+      var precision = series.decimals === null ? (Math.max(Math.abs(minimum), Math.abs(maximum)) < 1000 ? 4 : 2) : series.decimals;
+      step = Math.max(step, Math.pow(10, -precision));
+      var low = Math.floor(minimum / step) * step;
+      var high = Math.ceil(maximum / step) * step;
+      if (low === high) { low -= step; high += step; }
+      var ticks = [];
+      var left = 32;
+      for (var value = low; value <= high + step / 2; value += step) {
+        var decimals = series.decimals === null ? (Math.abs(value) < 1000 ? 4 : 2) : series.decimals;
+        var label = (Math.abs(value) < step / 1000 ? 0 : value).toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+        ticks.push({ value: value, label: label });
+        left = Math.max(left, label.length * 6 + 10);
+      }
+      var right = width - 14;
+      var firstShift = points[0].shift;
+      var lastShift = points[points.length - 1].shift;
+      var shiftRange = lastShift - firstShift || 1;
+      svg.replaceChildren();
+      svg.setAttribute("width", width);
+      svg.setAttribute("height", height);
+      for (var tick of ticks) {
+        var y = bottom - (tick.value - low) / (high - low) * (bottom - top);
+        svg.appendChild(svgElement("line", { x1: left, x2: right, y1: y, y2: y, class: "gridline" }));
+        svg.appendChild(svgElement("text", { x: left - 7, y: y + 3, "text-anchor": "end" }, tick.label));
+      }
+      var zero = left + (0 - firstShift) / shiftRange * (right - left);
+      svg.appendChild(svgElement("line", { x1: zero, x2: zero, y1: top, y2: bottom, class: "zero" }));
+      var coordinates = [];
+      for (var point of points) {
+        var x = left + (point.shift - firstShift) / shiftRange * (right - left);
+        var y = bottom - (point.value - low) / (high - low) * (bottom - top);
+        coordinates.push({ x: x, y: y, point: point });
+        if (point.shift === firstShift || point.shift === 0 || point.shift === lastShift) {
+          svg.appendChild(svgElement("text", { x: x, y: bottom + 16, "text-anchor": "middle" }, point.shift));
+        }
+      }
+      svg.appendChild(svgElement("polyline", { points: coordinates.map(function (p) { return p.x + "," + p.y; }).join(" "), class: "line" }));
+      for (var position of coordinates) {
+        var circle = svgElement("circle", { cx: position.x, cy: position.y, r: 3.5 });
+        circle.appendChild(svgElement("title", {}, "Rate shift " + position.point.shift + ": " + position.point.label));
+        svg.appendChild(circle);
+      }
+      svg.appendChild(svgElement("text", { x: (left + right) / 2, y: height - 3, "text-anchor": "middle" }, "Rate shift"));
+    }
+    reportSize();
+  }
+
   function render(result) {
-    var version = ++renderVersion;
     var data = result.structuredContent || {};
     document.body.classList.toggle("curve", data.operation === "curve");
     var head = document.getElementById("head");
-    var plots = document.getElementById("plots");
-    var note = document.getElementById("note");
-    plots.innerHTML = "";
-    note.textContent = "";
+    var charts = document.getElementById("charts");
+    charts.replaceChildren();
     if (data.status !== "completed") {
       head.textContent = "Job " + (data.job_id || "") + " is " + (data.status || "unknown") + ". " + (data.error || "");
       reportSize();
       return;
     }
-    var params = JSON.stringify(data.parameters || {});
-    head.textContent = data.cusip + " · " + data.pricing_date + " · " + data.operation + " " + params + " · " + data.job_id;
-    var names = data.plots || [];
-    if (names.length === 0) {
+    var groups = data.operation === "curve" ? data.curves : data.cards;
+    if ((groups || []).length) {
       head.textContent = "";
+      groups.forEach(function (card) {
+        var panel = document.createElement("section");
+        panel.className = "comparison";
+        var title = document.createElement("h2");
+        title.textContent = card.cusip + (data.operation === "curve" ? " — Rate sensitivity" : " — Base vs. " + card.scenario);
+        panel.appendChild(title);
+        var subtitle = document.createElement("div");
+        subtitle.className = "subtitle";
+        subtitle.textContent = data.pricing_date + " · Input row " + (card.row + 1);
+        panel.appendChild(subtitle);
+        var grid = document.createElement("div");
+        grid.className = data.operation === "curve" ? "curves-grid" : "metrics";
+        card.metrics.forEach(function (metric) {
+          var cell = document.createElement("div");
+          cell.className = data.operation === "curve" ? "curve-metric" : "metric";
+          var label = document.createElement("div");
+          label.className = "label";
+          label.textContent = metric.name;
+          cell.appendChild(label);
+          if (data.operation === "curve") {
+            var svg = svgElement("svg", { role: "img", "aria-label": metric.name + " rate sensitivity" });
+            svg.series = metric;
+            cell.appendChild(svg);
+            grid.appendChild(cell);
+            return;
+          }
+          var values = document.createElement("div");
+          values.className = "values";
+          var old = document.createElement("span");
+          old.className = "old";
+          old.textContent = metric.base;
+          var arrow = document.createElement("span");
+          arrow.className = "arrow";
+          arrow.textContent = "→";
+          var current = document.createElement("strong");
+          current.textContent = metric.value;
+          values.append(old, arrow, current);
+          cell.appendChild(values);
+          var difference = document.createElement("div");
+          difference.className = "difference " + metric.direction;
+          difference.textContent = "Δ " + metric.difference;
+          cell.appendChild(difference);
+          grid.appendChild(cell);
+        });
+        panel.appendChild(grid);
+        var basis = document.createElement("div");
+        basis.className = "basis";
+        basis.textContent = data.operation === "curve" ? "0 = this run’s zero-shift scenario." : data.operation === "prepay"
+          ? "Difference vs. the saved Base run."
+          : "Difference vs. this run’s zero-shift scenario.";
+        panel.appendChild(basis);
+        panel.title = data.job_id;
+        charts.appendChild(panel);
+      });
+      drawCurves();
       reportSize();
       return;
     }
-    names.forEach(function (name) {
-      var img = document.createElement("img");
-      img.alt = data.cusip + " · " + name;
-      img.style.display = "none";
-      img.onload = function () {
-        if (version !== renderVersion) return;
-        img.style.display = "";
-        reportSize();
-      };
-      img.onerror = function () {
-        if (version !== renderVersion) return;
-        img.remove();
-        note.textContent = "Could not display " + name + ".";
-        reportSize();
-      };
-      plots.appendChild(img);
-      sendRequest("tools/call", { name: "get_plot", arguments: { job_id: data.job_id, plot_name: name } })
-        .then(function (reply) {
-          if (version !== renderVersion) return;
-          if (reply.isError) {
-            img.remove();
-            note.textContent = "Could not load " + name + ".";
-            reportSize();
-            return;
-          }
-          img.src = "data:image/png;base64," + reply.structuredContent.image;
-        }, function (err) {
-          if (version !== renderVersion) return;
-          img.remove();
-          note.textContent = "Could not load " + name + ": " + JSON.stringify(err);
-          reportSize();
-        });
-    });
+    head.textContent = "";
     reportSize();
   }
 
@@ -118,7 +234,14 @@
     }
   });
 
-  new ResizeObserver(reportSize).observe(document.getElementById("results"));
+  new ResizeObserver(function () {
+    var width = document.getElementById("results").clientWidth;
+    if (width !== lastWidth) {
+      lastWidth = width;
+      drawCurves();
+    }
+    reportSize();
+  }).observe(document.getElementById("results"));
 
   sendRequest("ui/initialize", {
     protocolVersion: "2026-01-26",

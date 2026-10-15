@@ -1,8 +1,6 @@
-import base64
 import io
 import json
 import os
-from pathlib import Path
 from typing import Annotated, Literal
 
 from mcp.server.apps import Apps
@@ -23,34 +21,74 @@ apps.add_html_resource(
 )
 
 
-@apps.tool(resource_uri=RESULTS_UI, description="Display the existing PNG charts of a completed job inline. Call only when read_job_results returns a nonempty plots list. Base jobs use a normal table in chat and do not need this tool.")
+@apps.tool(resource_uri=RESULTS_UI, description="Display a completed job's HTML comparison cards or SVG rate curves inline. Call when read_job_results returns nonempty comparison data. Base jobs use a normal table in chat and do not need this tool.")
 async def show_job_chart(job_id: str) -> CallToolResult:
     results = agent.read_job_results(job_id)
     chart = {key: results[key] for key in ("job_id", "cusip", "pricing_date", "operation", "parameters", "status")}
-    chart["plots"] = results.get("plots", [])
+    cards = {}
+    curves = {}
+    if results["operation"] == "curve":
+        shifts = {}
+        for scenario in agent.read_job(job_id)["scens"]:
+            shifts[scenario["name"]] = scenario["shift_bp"]
+        for metric in results.get("comparison", []):
+            key = (metric["row"], metric["cusip"])
+            if key not in curves:
+                curves[key] = {"row": metric["row"], "cusip": metric["cusip"], "metrics": {}}
+            series = curves[key]["metrics"]
+            name = metric["metric"]
+            if name not in series:
+                series[name] = {
+                    "name": name, "decimals": agent.METRIC_DECIMALS.get(name),
+                    "points": [{"shift": 0, "value": metric["base"], "label": agent.format_metric(name, metric["base"])}],
+                }
+            series[name]["points"].append({
+                "shift": shifts[metric["scenario"]], "value": metric["value"],
+                "label": agent.format_metric(name, metric["value"]),
+            })
+        for group in curves.values():
+            series = []
+            for name in agent.METRICS:
+                if name in group["metrics"]:
+                    metric = group["metrics"][name]
+                    metric["points"].sort(key=lambda point: point["shift"])
+                    series.append(metric)
+            group["metrics"] = series
+    else:
+        for metric in results.get("comparison", []):
+            key = (metric["row"], metric["cusip"], metric["scenario"])
+            if key not in cards:
+                cards[key] = {"row": metric["row"], "cusip": metric["cusip"], "scenario": metric["scenario"], "metrics": []}
+            difference = agent.format_metric(metric["metric"], metric["difference"])
+            direction = "flat"
+            if float(difference.replace(",", "")) != 0:
+                direction = "up" if metric["difference"] > 0 else "down"
+            else:
+                difference = difference.lstrip("-")
+            cards[key]["metrics"].append({
+                "name": metric["metric"],
+                "base": agent.format_metric(metric["metric"], metric["base"]),
+                "value": agent.format_metric(metric["metric"], metric["value"]),
+                "difference": ("+" if direction == "up" else "") + difference,
+                "direction": direction,
+            })
+    chart["cards"] = list(cards.values())
+    chart["curves"] = list(curves.values())
     return CallToolResult(content=[TextContent(type="text", text="Charts for " + job_id)], structured_content=chart)
-
-
-@apps.tool(resource_uri=RESULTS_UI, visibility=["app"], description="Used by the results page only: returns one chart of a job as base64 PNG.")
-async def get_plot(job_id: str, plot_name: str) -> CallToolResult:
-    plot_paths = {os.path.basename(path): path for path in agent.read_job(job_id).get("plot_files", [])}
-    plot_file = Path(plot_paths[plot_name])
-    image = {"image": base64.b64encode(plot_file.read_bytes()).decode("ascii")}
-    return CallToolResult(content=[TextContent(type="text", text=plot_name)], structured_content=image)
 
 
 SERVER_INSTRUCTIONS = """PolyPaths pricing assistant. Flow:
 Skip routine progress narration. Show parameter confirmation, final findings, or a problem requiring user attention.
 1. list_assets(pricing_date) to see the Cusip values in the input, then prepare_base(cusip, pricing_date). It returns analysis_id and job_id with status prepared.
-2. execute_job(job_id). The server shows the user a Run / Cancel form with the saved parameters; the job runs only if the user selects Run. Do not ask the user again in chat. If cancelled, stop.
-3. When the status is completed, read_job_results(job_id). For non-curve jobs, reproduce display_table as a normal Markdown table in your chat reply, preserving its decimal places. Do not add a Unit column, unit suffixes or extra decimal places. If plots is nonempty, also call show_job_chart(job_id) to display the original PNG charts. If plots is empty, use the chat table only; do not call show_job_chart or say that no chart was returned.
-4. Scenarios need a completed Base: prepare_prepay, prepare_rate_shift or prepare_curve with the same analysis_id, then execute_job and read_job_results. Each scenario starts from the saved Base settings; shocks do not accumulate. If created is false, no scenario was created: follow base_status and reason. If prepared, execute the Base and prepare the requested scenario again after it completes. If running, wait and check read_job_status; do not execute it again. If failed, report base_error and stop; do not retry that failed job or create a new Base unless the user requests it.
+2. execute_job(job_id). The server shows the user a Run / Cancel form with the saved parameters; the job runs only if the user selects Run. Do not ask the user again in chat. If cancelled, stop. execute_job starts BatchCal and returns running at once; BatchCal keeps running on the server. Check read_job_status(job_id) until it returns completed or failed; a run takes a few minutes, a nine-point curve longer. Do not call execute_job again for the same job.
+3. When the status is completed, read_job_results(job_id). If comparison is nonempty, call show_job_chart(job_id) for HTML comparison cards or SVG rate curves, then give a brief finding; do not duplicate the full table unless requested. If comparison is empty, reproduce display_table as a normal Markdown table in chat, preserving its decimal places; do not call show_job_chart or say that no chart was returned. Do not add a Unit column, unit suffixes or extra decimal places.
+4. Scenarios need a completed Base: prepare_prepay, prepare_rate_shift or prepare_curve with the same analysis_id, then execute_job, read_job_status until completed, then read_job_results. Each scenario starts from the saved Base settings; shocks do not accumulate. If created is false, no scenario was created: follow base_status and reason. If prepared, execute the Base and prepare the requested scenario again after it completes. If running, wait and check read_job_status; do not execute it again. If failed, report base_error and stop; do not retry that failed job or create a new Base unless the user requests it.
 Reporting: display Price with 2 decimals, OAS with 0 decimals, OA Dur with 1 decimal, OA CPR with 1 decimal and LT. CPR with 1 decimal. Display precision does not change raw calculation values. For prepay jobs the difference is the prepay run minus the Base job. For rate jobs it is scenario minus the zero-shift value inside the same job. prepay_factor is the Total Smm Asset Multiplier, not a CPR change. Keep DV01 as the engine reports it. Report rows of the same Cusip separately. A missing metric means the engine did not return it; do not invent numbers. Dates are YYYYMMDD; use Cusip values exactly as listed."""
 
 mcp = MCPServer("polypaths-wrapper", instructions=SERVER_INSTRUCTIONS, extensions=[apps])
 
 
-@mcp.tool(description="Read the job's numbers for a normal table in the chat. For completed non-curve jobs, reproduce display_table with its exact decimal places and no added units. If plots is nonempty, also call show_job_chart. Follow how_to_read; do not invent missing metrics.")
+@mcp.tool(description="Read job numbers. If comparison is nonempty, call show_job_chart for HTML comparison cards or SVG rate curves and give a brief finding without duplicating the full table unless requested. Otherwise reproduce display_table as a normal chat table with exact decimals and no added units. Follow how_to_read; do not invent missing metrics.")
 async def read_job_results(job_id: str) -> CallToolResult:
     results = agent.read_job_results(job_id)
     if results["status"] == "completed" and results["operation"] != "curve":
@@ -88,7 +126,7 @@ class RunConfirmation(BaseModel):
     choice: Literal["Run", "Cancel"] = Field(title="Execute this run?")
 
 
-@mcp.tool(description="Review the saved task parameters in a user confirmation form, then execute only if the user selects Run. Call directly after preparing the task; do not ask for another chat confirmation or use confirm_run.py. Cancellation leaves the task prepared; stop without retrying.")
+@mcp.tool(description="Review the saved task parameters in a user confirmation form, then start the run only if the user selects Run. Returns running at once while BatchCal keeps running on the server; poll read_job_status until completed or failed, then read_job_results. Call directly after preparing the task; do not ask for another chat confirmation or use confirm_run.py. Cancellation leaves the task prepared; stop without retrying.")
 async def execute_job(job_id: str, ctx: Context) -> dict:
     status = agent.read_job_status(job_id)
     if status["status"] != "prepared":
@@ -115,7 +153,7 @@ async def execute_job(job_id: str, ctx: Context) -> dict:
     return agent.execute_job(job_id)
 
 
-@mcp.tool(description="Read one task's status using its job_id.")
+@mcp.tool(description="Read one task's status using its job_id: prepared, running, completed or failed. Call it again after a while when it returns running; the result is recorded when BatchCal has finished.")
 async def read_job_status(job_id: str) -> dict:
     return agent.read_job_status(job_id)
 

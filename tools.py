@@ -1,7 +1,9 @@
 import copy
+import glob
 import io
 import json
 import os
+import shutil
 import subprocess
 
 import pandas as pd
@@ -64,3 +66,16 @@ def write_cmd_file(settings, cmds):
     print(text)
     io.open(settings["cmd_file"], "w", encoding="utf-8").write(text)
     return text
+
+
+def run_cmds(cmds, run_log=None):
+    for step in cmds:
+        cmd = cmds[step]
+        if run_log is not None:
+            run_log.write("\n" + step + "\n" + subprocess.list2cmdline(cmd) + "\n")
+            run_log.flush()
+        if step == "copy_rule":
+            for rule_file in glob.glob(cmd[2]):
+                shutil.copy(rule_file, cmd[3])
+        else:
+            subprocess.run(cmd, stdout=run_log, stderr=run_log)

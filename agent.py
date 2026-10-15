@@ -3,7 +3,7 @@ import copy
 import io
 import json
 import re
-import subprocess
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -12,7 +12,7 @@ import pandas as pd
 
 from prepare import prepare_input
 from run import make_cmd_file, names, prepare_settings, read_config
-from tools import read_input, read_json, write_input
+from tools import read_input, read_json, run_cmds, write_input
 
 
 AI_DIR = Path("outputs/ai")
@@ -250,6 +250,9 @@ def prepare_job(analysis_id, operation, parameters, base_settings, scens):
 
 def read_job_status(job_id):
     job = read_job(job_id)
+    if job["status"] == "running" and (job_file(job_id).parent / "finished.txt").is_file():
+        finish_job(job)
+        job = read_job(job_id)
     analysis = read_analysis(job["analysis_id"])
     return {
         "job_id": job_id, "analysis_id": job["analysis_id"],
@@ -328,38 +331,41 @@ def execute_job(job_id):
     job["status"] = "running"
     job["started_at"] = datetime.now().isoformat()
     save_json(job_dir / "job.json", job)
-    with (job_dir / "run.log").open("w", encoding="utf-8") as run_log:
-        process_result = subprocess.run(
-            ["cmd", "/d", "/c", job["run_files"]["cmd_file"]],
-            stdout=run_log, stderr=subprocess.STDOUT
-        )
-    job["returncode"] = process_result.returncode
-    job["status"] = "failed"
-    if process_result.returncode == 0:
-        metrics = read_job_metrics(job)
-        if job["operation"] == "prepay":
-            analysis = read_analysis(job["analysis_id"])
-            base_metrics = read_json(job_dir.parent / analysis["base_job_id"] / "metrics.json")
-            comparison = compare_metrics(base_metrics + metrics, "Base")
-        elif job["scens"]:
-            comparison = compare_metrics(metrics, "unch")
-        else:
-            comparison = []
-        if metrics:
-            save_json(job_dir / "metrics.json", metrics)
-            save_json(job_dir / "comparison.json", comparison)
-            if comparison:
-                pd.DataFrame(comparison).to_csv(job_dir / "comparison.csv", index=False)
-                from charts import draw_comparison
-                job["plot_files"] = draw_comparison(job_dir, job, comparison)
-            job["status"] = "completed"
-        else:
-            job["error"] = job.get("error", "No supported metrics were found in this job's output.")
-    else:
-        job["error"] = "BatchCal did not complete. See the local run.log."
-    job["finished_at"] = datetime.now().isoformat()
-    save_json(job_dir / "job.json", job)
+    threading.Thread(target=run_job, args=(job_id,)).start()
     return read_job_status(job_id)
+
+
+def run_job(job_id):
+    job = read_job(job_id)
+    job_dir = job_file(job_id).parent
+    with (job_dir / "run.log").open("w", encoding="utf-8") as run_log:
+        run_cmds(job["run_files"]["cmds"], run_log)
+    (job_dir / "finished.txt").write_text(datetime.now().isoformat(), encoding="utf-8")
+
+
+def finish_job(job):
+    job_dir = job_file(job["job_id"]).parent
+    job["status"] = "failed"
+    save_json(job_dir / "job.json", job)
+    metrics = read_job_metrics(job)
+    if job["operation"] == "prepay":
+        analysis = read_analysis(job["analysis_id"])
+        base_metrics = read_json(job_dir.parent / analysis["base_job_id"] / "metrics.json")
+        comparison = compare_metrics(base_metrics + metrics, "Base")
+    elif job["scens"]:
+        comparison = compare_metrics(metrics, "unch")
+    else:
+        comparison = []
+    if metrics:
+        save_json(job_dir / "metrics.json", metrics)
+        save_json(job_dir / "comparison.json", comparison)
+        if comparison:
+            pd.DataFrame(comparison).to_csv(job_dir / "comparison.csv", index=False)
+        job["status"] = "completed"
+    else:
+        job["error"] = job.get("error", "No supported metrics were found in this job's output.")
+    job["finished_at"] = (job_dir / "finished.txt").read_text(encoding="utf-8")
+    save_json(job_dir / "job.json", job)
 
 
 def read_job_results(job_id):
@@ -369,9 +375,6 @@ def read_job_results(job_id):
     job_dir = job_file(job_id).parent
     status["metrics"] = read_json(job_dir / "metrics.json")
     status["comparison"] = read_json(job_dir / "comparison.json")
-    status["plots"] = []
-    for plot_file in read_job(job_id).get("plot_files", []):
-        status["plots"].append(Path(plot_file).name)
     status["how_to_read"] = {
         "difference": "the Base job value for prepay jobs; the zero-shift (unch) value computed inside this same job for rate jobs",
         "base": "the separately executed Base job" if status["operation"] in ("base", "prepay") else "the zero-shift scenario of this job, run from the saved analysis settings; it is not the separately executed Base job",
