@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import os
@@ -9,6 +10,7 @@ from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel, Field
 
 import agent
+from run import scen_settings
 
 RESULTS_UI = "ui://polypaths-wrapper/results.html"
 
@@ -80,9 +82,9 @@ async def show_job_chart(job_id: str) -> CallToolResult:
 SERVER_INSTRUCTIONS = """PolyPaths pricing assistant. Flow:
 Skip routine progress narration. Show parameter confirmation, final findings, or a problem requiring user attention.
 1. list_assets(pricing_date) to see the Cusip values in the input, then prepare_base(cusip, pricing_date). It returns analysis_id and job_id with status prepared.
-2. execute_job(job_id). The server shows the user a Run / Cancel form with the saved parameters; the job runs only if the user selects Run. Do not ask the user again in chat. If cancelled, stop. execute_job starts BatchCal and returns running at once; BatchCal keeps running on the server. Check read_job_status(job_id) until it returns completed or failed; a run takes a few minutes, a nine-point curve longer. Do not call execute_job again for the same job.
-3. When the status is completed, read_job_results(job_id). If comparison is nonempty, call show_job_chart(job_id) for HTML comparison cards or SVG rate curves, then give a brief finding; do not duplicate the full table unless requested. If comparison is empty, reproduce display_table as a normal Markdown table in chat, preserving its decimal places; do not call show_job_chart or say that no chart was returned. Do not add a Unit column, unit suffixes or extra decimal places.
-4. Scenarios need a completed Base: prepare_prepay, prepare_rate_shift or prepare_curve with the same analysis_id, then execute_job, read_job_status until completed, then read_job_results. Each scenario starts from the saved Base settings; shocks do not accumulate. If created is false, no scenario was created: follow base_status and reason. If prepared, execute the Base and prepare the requested scenario again after it completes. If running, wait and check read_job_status; do not execute it again. If failed, report base_error and stop; do not retry that failed job or create a new Base unless the user requests it.
+2. execute_job(job_id). The server shows the user a Run / Cancel form with the saved parameters; the job runs only if the user selects Run. Do not ask the user again in chat. If cancelled, stop. The call waits for BatchCal and returns the final status and results, with progress notifications while waiting. A run takes a few minutes, a nine-point curve longer. Do not call execute_job again for the same job. Do not ask the user whether to keep waiting.
+3. When execute_job returns completed, use its results directly. If comparison is nonempty, call show_job_chart(job_id) for HTML comparison cards or SVG rate curves, then give a brief finding; do not duplicate the full table unless requested. If comparison is empty, reproduce display_table as a normal Markdown table in chat, preserving its decimal places; do not call show_job_chart or say that no chart was returned. Do not add a Unit column, unit suffixes or extra decimal places. read_job_results can retrieve saved results later. If the tool call is unexpectedly interrupted, read_job_status can diagnose the saved job; do not assume cancellation stopped BatchCal or restart it automatically.
+4. Scenarios need a completed Base: prepare_prepay, prepare_rate_shift or prepare_curve with the same analysis_id, then execute_job and display its completed results. Rate and Curve reuse the completed Base PF with /nc; Prepay uses the saved Base settings with its multiplier. Shocks do not accumulate. If created is false, no scenario was created: follow base_status and reason. If prepared, execute the Base and prepare the requested scenario again after it completes. If running, read_job_status can check the existing run; do not execute it again. If failed, report base_error and stop; do not retry that failed job or create a new Base unless the user requests it.
 Reporting: display Price with 2 decimals, OAS with 0 decimals, OA Dur with 1 decimal, OA CPR with 1 decimal and LT. CPR with 1 decimal. Display precision does not change raw calculation values. For prepay jobs the difference is the prepay run minus the Base job. For rate jobs it is scenario minus the zero-shift value inside the same job. prepay_factor is the Total Smm Asset Multiplier, not a CPR change. Keep DV01 as the engine reports it. Report rows of the same Cusip separately. A missing metric means the engine did not return it; do not invent numbers. Dates are YYYYMMDD; use Cusip values exactly as listed."""
 
 mcp = MCPServer("polypaths-wrapper", instructions=SERVER_INSTRUCTIONS, extensions=[apps])
@@ -112,12 +114,12 @@ async def prepare_prepay(analysis_id: str, prepay_factor: Literal[1.0, 1.5, 2.0]
     return agent.prepare_prepay(analysis_id, prepay_factor)
 
 
-@mcp.tool(description="Prepare a parallel Govt/Libor/Agency shift in bp (zero-shift plus the given shift) from the saved Base settings of analysis_id. Needs a completed Base job; otherwise returns created false. Nothing runs until execute_job.")
+@mcp.tool(description="Prepare a parallel Govt/Libor/Agency shift in bp (zero-shift plus the given shift) using the completed Base job's PF with /nc and the saved analysis settings. Otherwise returns created false. Nothing runs until execute_job.")
 async def prepare_rate_shift(analysis_id: str, shift_bp: Literal[-100, -75, -50, -25, 0, 25, 50, 75, 100]) -> dict:
     return agent.prepare_rate_shift(analysis_id, shift_bp)
 
 
-@mcp.tool(description="Prepare the fixed nine-point rate sensitivity curve, -100 to +100 bp, from the saved Base settings of analysis_id. Needs a completed Base job; otherwise returns created false. One run covers all nine points. Nothing runs until execute_job.")
+@mcp.tool(description="Prepare the fixed nine-point rate sensitivity curve, -100 to +100 bp, using the completed Base job's PF with /nc and the saved analysis settings. Otherwise returns created false. One scenario run covers all nine points. Nothing runs until execute_job.")
 async def prepare_curve(analysis_id: str) -> dict:
     return agent.prepare_curve(analysis_id)
 
@@ -126,11 +128,11 @@ class RunConfirmation(BaseModel):
     choice: Literal["Run", "Cancel"] = Field(title="Execute this run?")
 
 
-@mcp.tool(description="Review the saved task parameters in a user confirmation form, then start the run only if the user selects Run. Returns running at once while BatchCal keeps running on the server; poll read_job_status until completed or failed, then read_job_results. Call directly after preparing the task; do not ask for another chat confirmation or use confirm_run.py. Cancellation leaves the task prepared; stop without retrying.")
+@mcp.tool(description="Review saved parameters in a user confirmation form, then execute only if the user selects Run. Waits for calculation and returns final status and result numbers; sends progress while waiting. Use comparison and display_table just like read_job_results. Do not ask whether to keep waiting or call execute_job again. Call directly after preparing; do not ask for another chat confirmation or use confirm_run.py. Cancelling the confirmation leaves the task prepared; stop without retrying.")
 async def execute_job(job_id: str, ctx: Context) -> dict:
     status = agent.read_job_status(job_id)
     if status["status"] != "prepared":
-        return status
+        return (await read_job_results(job_id)).structured_content
     job = agent.read_job(job_id)
     settings = agent.read_json(agent.job_file(job_id).parent / "settings.json")
     preview = {
@@ -138,7 +140,7 @@ async def execute_job(job_id: str, ctx: Context) -> dict:
         "pricing_date": status["pricing_date"],
         "operation": status["operation"],
         "input_rows": status["input_rows"],
-        "calculate": settings["calculate"],
+        "calculate": scen_settings(settings)["calculate"],
         "parameters": job["parameters"],
         "scenarios": job["scens"],
         "job_id": job_id,
@@ -150,10 +152,18 @@ async def execute_job(job_id: str, ctx: Context) -> dict:
     )
     if confirmation.action != "accept" or confirmation.data.choice != "Run":
         return {**status, "confirmation": "cancelled"}
-    return agent.execute_job(job_id)
+    started = asyncio.get_running_loop().time()
+    execution = asyncio.create_task(asyncio.to_thread(agent.execute_job, job_id))
+    while not execution.done():
+        done, _ = await asyncio.wait({execution}, timeout=20)
+        if not done:
+            elapsed = asyncio.get_running_loop().time() - started
+            await ctx.report_progress(elapsed, message="BatchCal still running; elapsed " + str(int(elapsed)) + " seconds.")
+    await execution
+    return (await read_job_results(job_id)).structured_content
 
 
-@mcp.tool(description="Read one task's status using its job_id: prepared, running, completed or failed. Call it again after a while when it returns running; the result is recorded when BatchCal has finished.")
+@mcp.tool(description="Read saved task status: prepared, running, completed or failed. Useful for diagnosis or recovery after an interrupted tool call, including finalizing old jobs with a finished marker. Normal execute_job calls wait for completion without status polling. Never starts or restarts BatchCal.")
 async def read_job_status(job_id: str) -> dict:
     return agent.read_job_status(job_id)
 

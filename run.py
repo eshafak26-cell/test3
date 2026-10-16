@@ -12,7 +12,8 @@ def run(run_type, override):
 
 
 def make_cmd_file(settings):
-    settings = prepare_input(settings, names)
+    if not settings.get("nc", False):
+        settings = prepare_input(settings, names)
     scen = scen_settings(settings)
     cmds = {}
     if "horizon_date" in settings:
@@ -24,7 +25,9 @@ def make_cmd_file(settings):
         scen["scn"] = target_scn
     cmds["calc"] = build_cmd(scen)
     csv_file = os.path.splitext(scen["output_file"])[0] + "_cft*.csv"
-    if not scen.get("cftscn", False):
+    if scen.get("nc", False):
+        csv_file = os.path.splitext(scen["output_file"])[0] + "_*.csv"
+    elif not scen.get("cftscn", False):
         pf_to_csv = pf_to_csv_settings(settings)
         cmds["pf_to_csv"] = build_cmd(pf_to_csv)
         csv_file = pf_to_csv["output_file"]
@@ -127,11 +130,18 @@ def read_config(config_path, run_type, override):
     horizon_date = override.get("horizon_date", horizon_date)
 
     config["temporary_override"] = override
+    config["positions"] = positions
+    config["mode"] = mode
+    config["run_type"] = run_type
+    scenario = prepare_settings(config)["scenario"]
     config_text = json.dumps(config, ensure_ascii=False)
 
     config_text = config_text.replace(
         "{output_dir}", json.dumps(output_dir)[1:-1]
     )
+    if "scn" in scenario:
+        scn_name = os.path.splitext(os.path.basename(scenario["scn"]))[0]
+        config_text = config_text.replace("{scn_name}", json.dumps(scn_name)[1:-1])
     config_text = config_text.replace("{run_type}", run_type)
     config_text = config_text.replace("{pricing_date}", pricing_date)
     config_text = config_text.replace("{pricing_month}", pricing_date[:6])
@@ -142,9 +152,6 @@ def read_config(config_path, run_type, override):
         config_text = config_text.replace("{horizon_date}", horizon_date)
 
     config = json.loads(config_text)
-    config["positions"] = positions
-    config["mode"] = mode
-    config["run_type"] = run_type
     return config
 
 

@@ -128,21 +128,26 @@
         },
 
         "spot": {
-            "calculate": "/oas",
-            "output_file": "{output_dir}\\results\\scn_spot_calc\\scn_rates_{pricing_date}.pf",
+            "nc": true,
+            "calculate": "",
+            "mr_nofit": false,
+            "mr": "",
+            "mr_alt": "",
+            "Book Price": "",
+            "prc_anchor": "",
+            "clearcalcselections": false,
+            "Calc P/Y": "",
+            "PP_OAS_CACHE": "",
+            "PP_DISABLE_ALL_CALIB_FILE_CACHING": "",
+            "groupbyflds": "",
+            "Use History": "",
+            "PP_CALC_OA_SPEED_FOR_CMO": "",
+            "User CDU Date": "",
+            "template": "",
+            "input_file": "{output_dir}\\results\\base_calc\\base_{pricing_date}.pf",
+            "output_file": "{output_dir}\\results\\scn_spot_calc\\scn_{scn_name}_{pricing_date}.pf",
             "scenario": {
                 "scn": ".\\config\\scn\\rates.scn",
-                "scn_anchor": "OAS Constant",
-                "scnrptflds": ".\\config\\scn_fields.txt",
-                "calculate": "/scnoad /scnoaspd /scnmd"
-            }
-        },
-
-        "oas_shock": {
-            "calculate": "/oas",
-            "output_file": "{output_dir}\\results\\oas_shock_calc\\oas_shock_{pricing_date}.pf",
-            "scenario": {
-                "scn": ".\\config\\scn\\oas_shock.scn",
                 "scn_anchor": "OAS Constant",
                 "scnrptflds": ".\\config\\scn_fields.txt",
                 "calculate": "/scnoad /scnoaspd /scnmd"

@@ -3,7 +3,6 @@ import copy
 import io
 import json
 import re
-import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -118,8 +117,6 @@ def prepare_base(cusip, pricing_date):
     base_settings = prepare_input(base_settings, names)
     config = read_config("config.json", "spot", override)
     spot_settings = prepare_settings(config)
-    spot_settings["input_file"] = selected_input
-    spot_settings["mr"] = base_settings["mr"]
     scn_text = Path("config/scn/oas_shock.scn").read_text(encoding="utf-8")
     zero_scen = re.search(r'<Scenario Name="unch">.*?</Scenario>', scn_text, re.S).group(0)
     analysis = {
@@ -182,6 +179,10 @@ def prepare_scen_job(analysis_id, operation, parameters, scens, setfields):
     settings = copy.deepcopy(
         analysis["spot_settings"] if scens else analysis["base_settings"]
     )
+    if scens:
+        base_job = read_job(analysis["base_job_id"])
+        settings["nc"] = True
+        settings["input_file"] = base_job["run_files"]["cmds"]["calc"][-1]
     settings.update(setfields)
     return prepare_job(analysis_id, operation, parameters, settings, scens)
 
@@ -251,6 +252,7 @@ def prepare_job(analysis_id, operation, parameters, base_settings, scens):
 def read_job_status(job_id):
     job = read_job(job_id)
     if job["status"] == "running" and (job_file(job_id).parent / "finished.txt").is_file():
+        job["finished_at"] = (job_file(job_id).parent / "finished.txt").read_text(encoding="utf-8")
         finish_job(job)
         job = read_job(job_id)
     analysis = read_analysis(job["analysis_id"])
@@ -331,16 +333,12 @@ def execute_job(job_id):
     job["status"] = "running"
     job["started_at"] = datetime.now().isoformat()
     save_json(job_dir / "job.json", job)
-    threading.Thread(target=run_job, args=(job_id,)).start()
-    return read_job_status(job_id)
-
-
-def run_job(job_id):
-    job = read_job(job_id)
-    job_dir = job_file(job_id).parent
     with (job_dir / "run.log").open("w", encoding="utf-8") as run_log:
         run_cmds(job["run_files"]["cmds"], run_log)
-    (job_dir / "finished.txt").write_text(datetime.now().isoformat(), encoding="utf-8")
+    job["finished_at"] = datetime.now().isoformat()
+    finish_job(job)
+    (job_dir / "finished.txt").write_text(job["finished_at"], encoding="utf-8")
+    return read_job_status(job_id)
 
 
 def finish_job(job):
@@ -364,7 +362,6 @@ def finish_job(job):
         job["status"] = "completed"
     else:
         job["error"] = job.get("error", "No supported metrics were found in this job's output.")
-    job["finished_at"] = (job_dir / "finished.txt").read_text(encoding="utf-8")
     save_json(job_dir / "job.json", job)
 
 
